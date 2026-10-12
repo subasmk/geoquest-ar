@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b1d2a">
+<title>GeoQuest AR - Techneon</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:#0b1d2a;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;touch-action:none}
+#cam,#scene{position:fixed;inset:0;width:100%;height:100%}
+#cam{object-fit:cover;background:#0b1d2a}
+.hidden{display:none!important}
+.panel{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:radial-gradient(circle at 50% 20%,#1b4a5f 0%,#0b1d2a 70%);overflow:auto;z-index:20}
+#quiz,#end{background:rgba(5,15,25,.88);z-index:30}
+.logo{font-size:44px;font-weight:900;letter-spacing:1px}
+.logo span{color:#ffd23f}
+.tag{max-width:420px;opacity:.85;margin:0}
+button{font:inherit;color:#fff;border:0;border-radius:14px;cursor:pointer}
+button.big{width:100%;max-width:360px;padding:16px;font-size:18px;font-weight:700;background:linear-gradient(135deg,#ffb703,#fb8500);color:#1a1200;box-shadow:0 6px 20px rgba(255,170,0,.35)}
+button.big.alt{background:#1f6f8b;color:#fff;box-shadow:none}
+button.small{position:fixed;right:12px;bottom:14px;padding:8px 14px;background:rgba(0,0,0,.5);font-size:14px}
+details{max-width:420px;text-align:left;opacity:.9}
+summary{cursor:pointer;text-align:center}
+li{margin:6px 0}
+.foot{font-size:12px;opacity:.6;max-width:420px}
+.top{position:fixed;top:max(10px,env(safe-area-inset-top));left:0;right:0;display:flex;gap:8px;justify-content:center}
+.pill{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:999px;font-weight:700;font-variant-numeric:tabular-nums}
+#score{color:#ffd23f}
+#radar{position:fixed;left:10px;top:56px;width:120px;height:120px;border-radius:50%;background:rgba(0,0,0,.35)}
+.status{position:fixed;left:0;right:0;bottom:150px;text-align:center;font-size:16px;font-weight:600;text-shadow:0 2px 6px #000;padding:0 70px 0 16px}
+#joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.3)}
+#knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.6)}
+#lookhint{position:fixed;right:14px;top:60px;font-size:12px;opacity:.7}
+.qtitle{font-size:26px;font-weight:800;color:#ffd23f}
+#qtext{font-size:20px;max-width:440px}
+#qopts{display:flex;flex-direction:column;gap:10px;width:100%;max-width:400px}
+#qopts button{padding:14px;font-size:17px;background:#1f6f8b}
+#qopts button.good{background:#2a9d3f}
+#qopts button.bad{background:#b5303a}
+#qres{min-height:26px;font-weight:700}
+#endstats{font-size:20px;line-height:1.6}
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted autoplay></video>
+<canvas id="scene"></canvas>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div class="top">
+    <div class="pill" id="score">0 pts</div>
+    <div class="pill" id="found">0 / 5</div>
+    <div class="pill" id="timer">00:00</div>
+  </div>
+  <canvas id="radar" width="260" height="260"></canvas>
+  <div id="status" class="status">Looking for GPS...</div>
+  <div id="joy" class="hidden"><div id="knob"></div></div>
+  <div id="lookhint" class="hidden">Drag screen to turn</div>
+  <button id="quit" class="small">Quit</button>
+</div>
+
+<!-- Start screen -->
+<div id="start" class="panel">
+  <div class="logo">GeoQuest <span>AR</span></div>
+  <p class="tag">Find hidden treasure in the real world. Walk, look, answer, win.</p>
+  <button id="btnAR" class="big">Play in AR (GPS + camera)</button>
+  <button id="btnPractice" class="big alt">Practice mode (no GPS needed)</button>
+  <details>
+    <summary>How to play</summary>
+    <ol>
+      <li>Go outside to an open area (school ground).</li>
+      <li>Allow camera, location and motion.</li>
+      <li>Hold the phone up and turn around. Gold treasures float in the world.</li>
+      <li>Walk to a treasure (within 5 m) to grab it, then answer the question.</li>
+      <li>Find all 5 as fast as you can.</li>
+    </ol>
+  </details>
+  <div class="foot">Team Techneon - Problem #2 - Demo build. Phone GPS is about 3-5 m accurate; a GNSS receiver with CORS data would make it centimetre-level.</div>
+</div>
+
+<!-- Question dialog -->
+<div id="quiz" class="panel hidden">
+  <div class="qtitle">Treasure found!</div>
+  <div id="qtext"></div>
+  <div id="qopts"></div>
+  <div id="qres"></div>
+</div>
+
+<!-- End screen -->
+<div id="end" class="panel hidden">
+  <div class="logo">Quest <span>complete</span></div>
+  <div id="endstats"></div>
+  <button id="btnAgain" class="big">Play again</button>
+</div>
+
+<script>
+/* GeoQuest AR - Techneon demo. Plain JS, no libraries, no paid services.
+   Treasures are placed in metres around where you start, so it works in any open ground. */
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const cam = $('cam'), cv = $('scene'), ctx = cv.getContext('2d');
+const radar = $('radar'), rctx = radar.getContext('2d');
+const D2R = Math.PI / 180, R_EARTH = 6371000;
+const TREASURES = 5, COLLECT_M = 5, HFOV = 62, VFOV = 80;
+
+const QUESTIONS = [
+  ['Which direction does the sun rise?', ['East', 'West', 'North'], 0],
+  ['What do we call a tool that shows direction?', ['Compass', 'Ruler', 'Clock'], 0],
+  ['What does GPS stand for?', ['Global Positioning System', 'Great Planet Signal', 'Go Path Setter'], 0],
+  ['How many satellites help one GPS fix at minimum?', ['4', '1', '10'], 0],
+  ['Which planet do we live on?', ['Earth', 'Mars', 'Venus'], 0],
+  ['A map shows places from above. This view is called a...', ['Bird\'s-eye view', 'Close-up', 'Mirror view'], 0],
+  ['What is 1 kilometre in metres?', ['1000', '100', '10'], 0],
+  ['Which line splits Earth into north and south?', ['Equator', 'Rainbow', 'Border'], 0],
+  ['Which is a safe place in an earthquake?', ['Under a sturdy table', 'Near a window', 'Lift'], 0],
+  ['Which direction is opposite to North?', ['South', 'East', 'Up'], 0],
+];
+
+let mode = null;           // 'ar' | 'practice'
+let running = false;
+let origin = null;         // first good GPS fix
+let player = {x: 0, y: 0, acc: 10, has: false};
+let heading = 0, pitch = 0, headingOK = false, lookYaw = 0;
+let treasures = [], score = 0, found = 0, t0 = 0, paused = false, nextQ = 0;
+let stream = null, watchId = null, raf = 0;
+const keys = {};
+let joy = {x: 0, y: 0};
+
+function size() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', size); size();
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const norm = a => ((a % 360) + 360) % 360;
+const dAng = a => ((a + 540) % 360) - 180;
+
+function spawn() {
+  treasures = [];
+  const base = Math.random() * 360;
+  for (let i = 0; i < TREASURES; i++) {
+    const ang = (base + i * (360 / TREASURES) + rand(-25, 25)) * D2R;
+    const dist = rand(10, 28);
+    treasures.push({x: player.x + Math.sin(ang) * dist, y: player.y + Math.cos(ang) * dist, got: false, ph: rand(0, 6.28), kind: i % 3});
+  }
+}
+
+function toXY(lat, lon) {
+  return {
+    x: (lon - origin.lon) * D2R * R_EARTH * Math.cos(origin.lat * D2R),
+    y: (lat - origin.lat) * D2R * R_EARTH
+  };
+}
+
+/* ---------- start / stop ---------- */
+async function startAR() {
+  mode = 'ar';
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+      await DeviceOrientationEvent.requestPermission();
+    }
+  } catch (e) {}
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}}, audio: false});
+    cam.srcObject = stream; cam.style.display = 'block';
+  } catch (e) { cam.style.display = 'none'; }
+  if (!navigator.geolocation) { alert('This phone has no GPS support. Try practice mode.'); return; }
+  begin();
+  setStatus('Looking for GPS... stand in the open');
+  watchId = navigator.geolocation.watchPosition(onGPS, err => setStatus('GPS problem: ' + err.message + '. Allow location, go outside.'),
+    {enableHighAccuracy: true, maximumAge: 0, timeout: 20000});
+  addEventListener('deviceorientationabsolute', onOrient, true);
+  addEventListener('deviceorientation', onOrient, true);
+}
+
+function startPractice() {
+  mode = 'practice';
+  cam.style.display = 'none';
+  player = {x: 0, y: 0, acc: 3, has: true};
+  headingOK = true; heading = 0;
+  begin();
+  spawn();
+  $('joy').classList.remove('hidden'); $('lookhint').classList.remove('hidden');
+  setStatus('Practice: drag the joystick to walk, drag the screen to turn');
+}
+
+function begin() {
+  $('start').classList.add('hidden'); $('end').classList.add('hidden'); $('quiz').classList.add('hidden');
+  $('hud').classList.remove('hidden');
+  score = 0; found = 0; nextQ = Math.floor(Math.random() * QUESTIONS.length); paused = false;
+  t0 = performance.now(); running = true; updateHud();
+  cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
+}
+
+function stop() {
+  running = false; cancelAnimationFrame(raf);
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  removeEventListener('deviceorientationabsolute', onOrient, true);
+  removeEventListener('deviceorientation', onOrient, true);
+  origin = null; player.has = false; headingOK = false;
+  $('hud').classList.add('hidden'); $('joy').classList.add('hidden'); $('lookhint').classList.add('hidden');
+  cam.style.display = 'none';
+}
+
+/* ---------- sensors ---------- */
+function onGPS(p) {
+  const c = p.coords;
+  if (!origin) {
+    if (c.accuracy > 25) { setStatus('Waiting for better GPS (now ' + Math.round(c.accuracy) + ' m)...'); return; }
+    origin = {lat: c.latitude, lon: c.longitude};
+    player = {x: 0, y: 0, acc: c.accuracy, has: true};
+    spawn();
+    setStatus('Treasures hidden around you. Look and walk!');
+    return;
+  }
+  const q = toXY(c.latitude, c.longitude);
+  // light smoothing so markers do not jitter
+  player.x += (q.x - player.x) * 0.5; player.y += (q.y - player.y) * 0.5;
+  player.acc = c.accuracy;
+}
+
+function onOrient(e) {
+  if (e.type === 'deviceorientation' && e.absolute === false && !('webkitCompassHeading' in e)) { /* relative only: keep as fallback */ }
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+  else if (e.alpha !== null && e.beta !== null && e.gamma !== null) {
+    const a = e.alpha * D2R, b = e.beta * D2R, g = e.gamma * D2R;
+    const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), sG = Math.sin(g);
+    const rA = -cA * sG * cB - sA * sB, rB = -sA * sG * cB + cA * sB;
+    h = norm(Math.atan2(rA, rB) / D2R);
+  }
+  if (h !== null) {
+    if (!headingOK) { heading = h; headingOK = true; }
+    else heading = norm(heading + dAng(h - heading) * 0.25);
+  }
+  if (e.beta !== null) pitch = e.beta - 90;
+}
+
+/* ---------- main loop ---------- */
+let last = performance.now();
+function loop(now) {
+  if (!running) return;
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (mode === 'practice') stepPractice(dt);
+  if (!paused) check();
+  draw(now / 1000);
+  updateHud();
+  raf = requestAnimationFrame(loop);
+}
+
+function stepPractice(dt) {
+  let fx = joy.y, sx = joy.x;
+  if (keys.w || keys.ArrowUp) fx += 1;
+  if (keys.s || keys.ArrowDown) fx -= 1;
+  if (keys.d) sx += 1;
+  if (keys.a) sx -= 1;
+  if (keys.ArrowLeft) heading = norm(heading - 90 * dt);
+  if (keys.ArrowRight) heading = norm(heading + 90 * dt);
+  const sp = 5; // m/s, fast so the demo is quick
+  const h = heading * D2R;
+  player.x += (Math.sin(h) * fx + Math.cos(h) * sx) * sp * dt;
+  player.y += (Math.cos(h) * fx - Math.sin(h) * sx) * sp * dt;
+}
+
+function check() {
+  if (!player.has) return;
+  const thr = Math.max(COLLECT_M, Math.min(player.acc, 9));
+  for (const t of treasures) {
+    if (t.got) continue;
+    if (Math.hypot(t.x - player.x, t.y - player.y) <= thr) { t.got = true; found++; askQuestion(); return; }
+  }
+}
+
+/* ---------- drawing ---------- */
+function draw(time) {
+  const W = innerWidth, H = innerHeight;
+  ctx.clearRect(0, 0, W, H);
+  if (mode === 'practice') drawWorld(W, H, time);
+  if (!player.has || !headingOK) {
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  const yaw = mode === 'practice' ? 0 : 0;
+  const hdg = heading;
+  const pxPerDeg = W / HFOV;
+  const horizon = H * 0.5 + (mode === 'ar' ? pitch * (H / VFOV) : 0);
+  const items = [];
+  for (const t of treasures) {
+    if (t.got) continue;
+    const dx = t.x - player.x, dy = t.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    const brg = norm(Math.atan2(dx, dy) / D2R);
+    items.push({t, dist, rel: dAng(brg - hdg)});
+  }
+  items.sort((a, b) => b.dist - a.dist);
+  let nearest = null;
+  for (const it of items) {
+    if (!nearest || it.dist < nearest.dist) nearest = it;
+    const x = W / 2 + it.rel * pxPerDeg;
+    const bob = Math.sin(time * 2 + it.t.ph) * 8;
+    const size = Math.max(36, Math.min(120, 1500 / (it.dist + 8)));
+    const y = horizon - size * 0.6 + bob;
+    if (Math.abs(it.rel) < HFOV / 2 + 8) drawTreasure(x, y, size, time + it.t.ph, it.t.kind, it.dist);
+  }
+  // edge arrow to nearest
+  if (nearest && Math.abs(nearest.rel) > HFOV / 2 - 4) {
+    const right = nearest.rel > 0;
+    const ax = right ? W - 34 : 34, ay = H * 0.5;
+    ctx.save(); ctx.translate(ax, ay); ctx.scale(right ? 1 : -1, 1);
+    ctx.fillStyle = 'rgba(255,210,63,.9)'; ctx.beginPath();
+    ctx.moveTo(14, 0); ctx.lineTo(-10, -22); ctx.lineTo(-10, 22); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#fff'; ctx.font = '700 14px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(Math.round(nearest.dist) + ' m', ax, ay + 42);
+  }
+  drawRadar(items);
+  if (nearest) {
+    const m = Math.round(nearest.dist);
+    const acc = mode === 'ar' ? '  (GPS +/- ' + Math.round(player.acc) + ' m)' : '';
+    setStatus(m <= 10 ? 'Very close! ' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc);
+  }
+}
+
+function drawWorld(W, H, time) {
+  const horizon = H * 0.5;
+  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+  sky.addColorStop(0, '#2b7fb8'); sky.addColorStop(1, '#bfe6f5');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, horizon);
+  const gr = ctx.createLinearGradient(0, horizon, 0, H);
+  gr.addColorStop(0, '#5fae4b'); gr.addColorStop(1, '#2d6a2a');
+  ctx.fillStyle = gr; ctx.fillRect(0, horizon, W, H - horizon);
+  // scenery: trees at fixed world bearings so turning/walking feels real
+  const pxPerDeg = W / HFOV;
+  for (let i = 0; i < 24; i++) {
+    const brg = (i * 37) % 360, dist = 40 + (i * 13) % 50;
+    const rel = dAng(brg - heading);
+    if (Math.abs(rel) > HFOV / 2 + 10) continue;
+    const x = W / 2 + rel * pxPerDeg, s = 1500 / (dist + 20);
+    ctx.fillStyle = '#6b4a2b'; ctx.fillRect(x - s * 0.04, horizon - s * 0.3, s * 0.08, s * 0.3);
+    ctx.fillStyle = '#1f6a31'; ctx.beginPath(); ctx.arc(x, horizon - s * 0.42, s * 0.2, 0, 6.28); ctx.fill();
+  }
+  // ground grid moving with the player
+  ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1;
+  for (let i = 1; i < 9; i++) { const y = horizon + (H - horizon) * (i / 9) ** 2; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+}
+
+function drawTreasure(x, y, s, t, kind, dist) {
+  const glow = ctx.createRadialGradient(x, y, s * 0.1, x, y, s * 1.1);
+  glow.addColorStop(0, 'rgba(255,220,80,.55)'); glow.addColorStop(1, 'rgba(255,220,80,0)');
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, s * 1.1, 0, 6.28); ctx.fill();
+  ctx.save(); ctx.translate(x, y);
+  const sq = Math.cos(t * 2.2); // spin: squash horizontally
+  if (kind === 1) { // gem
+    ctx.scale(Math.max(0.25, Math.abs(sq)), 1);
+    ctx.fillStyle = '#35d0ff'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, -s * .5); ctx.lineTo(s * .42, -s * .1); ctx.lineTo(0, s * .55); ctx.lineTo(-s * .42, -s * .1); ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else if (kind === 2) { // star
+    ctx.scale(Math.max(0.3, Math.abs(sq)), 1);
+    ctx.fillStyle = '#ff7ad9'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath();
+    for (let i = 0; i < 10; i++) { const r = i % 2 ? s * .25 : s * .52, a = -1.5708 + i * 0.6283; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else { // coin
+    ctx.scale(Math.max(0.2, Math.abs(sq)), 1);
+    ctx.fillStyle = '#ffc107'; ctx.strokeStyle = '#fff3b0'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(0, 0, s * .45, 0, 6.28); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#b07d00'; ctx.font = '900 ' + s * .5 + 'px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('G', 0, 2);
+  }
+  ctx.restore();
+  ctx.fillStyle = '#fff'; ctx.font = '700 14px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 4; ctx.fillText(Math.round(dist) + ' m', x, y + s * 0.75); ctx.shadowBlur = 0;
+}
+
+function drawRadar(items) {
+  const r = radar.width / 2, c = r;
+  rctx.clearRect(0, 0, radar.width, radar.height);
+  rctx.fillStyle = 'rgba(8,40,30,.8)'; rctx.beginPath(); rctx.arc(c, c, r - 2, 0, 6.28); rctx.fill();
+  rctx.strokeStyle = 'rgba(120,255,170,.5)'; rctx.lineWidth = 2;
+  for (const f of [0.33, 0.66, 1]) { rctx.beginPath(); rctx.arc(c, c, (r - 4) * f, 0, 6.28); rctx.stroke(); }
+  // view cone
+  rctx.fillStyle = 'rgba(255,255,255,.18)'; rctx.beginPath(); rctx.moveTo(c, c);
+  rctx.arc(c, c, r - 4, (-90 - HFOV / 2) * D2R, (-90 + HFOV / 2) * D2R); rctx.closePath(); rctx.fill();
+  const range = 35;
+  for (const it of items) {
+    const rr = Math.min(it.dist / range, 1) * (r - 10);
+    const a = (it.rel - 90) * D2R;
+    rctx.fillStyle = '#ffd23f'; rctx.beginPath(); rctx.arc(c + Math.cos(a) * rr, c + Math.sin(a) * rr, 9, 0, 6.28); rctx.fill();
+  }
+  rctx.fillStyle = '#fff'; rctx.beginPath(); rctx.arc(c, c, 7, 0, 6.28); rctx.fill();
+}
+
+/* ---------- HUD, quiz, end ---------- */
+function setStatus(s) { $('status').textContent = s; }
+function updateHud() {
+  $('score').textContent = score + ' pts';
+  $('found').textContent = found + ' / ' + TREASURES;
+  const s = Math.floor((performance.now() - t0) / 1000);
+  if (running && !paused) $('timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+
+function askQuestion() {
+  paused = true;
+  const q = QUESTIONS[nextQ % QUESTIONS.length]; nextQ++;
+  $('qtext').textContent = q[0];
+  const opts = q[1].map((t, i) => ({t, ok: i === q[2]})).sort(() => Math.random() - .5);
+  const box = $('qopts'); box.innerHTML = ''; $('qres').textContent = '';
+  opts.forEach(o => {
+    const b = document.createElement('button'); b.textContent = o.t;
+    b.onclick = () => {
+      if (box.dataset.done) return; box.dataset.done = '1';
+      score += 100 + (o.ok ? 100 : 0);
+      b.className = o.ok ? 'good' : 'bad';
+      if (!o.ok) [...box.children].forEach(x => { if (x.textContent === q[1][q[2]]) x.className = 'good'; });
+      $('qres').textContent = o.ok ? 'Correct! +200 points' : 'Not quite. +100 for finding it';
+      setTimeout(afterQuiz, 1400);
+    };
+    box.appendChild(b);
+  });
+  delete box.dataset.done;
+  $('quiz').classList.remove('hidden');
+}
+
+function afterQuiz() {
+  $('quiz').classList.add('hidden');
+  if (found >= TREASURES) return finish();
+  paused = false;
+}
+
+function finish() {
+  const s = Math.floor((performance.now() - t0) / 1000);
+  const bonus = Math.max(0, 300 - s);
+  score += bonus;
+  running = false;
+  $('endstats').innerHTML = 'Treasures: ' + found + ' / ' + TREASURES + '<br>Time: ' + Math.floor(s / 60) + 'm ' + (s % 60) + 's<br>Speed bonus: +' + bonus + '<br><b style="color:#ffd23f;font-size:30px">' + score + ' points</b>';
+  $('end').classList.remove('hidden');
+}
+
+/* ---------- input ---------- */
+$('btnAR').onclick = startAR;
+$('btnPractice').onclick = startPractice;
+$('btnAgain').onclick = () => { stop(); $('end').classList.add('hidden'); $('start').classList.remove('hidden'); };
+$('quit').onclick = () => { stop(); $('start').classList.remove('hidden'); };
+addEventListener('keydown', e => { keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = true; });
+addEventListener('keyup', e => { keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false; });
+
+// joystick + drag-to-look (practice mode)
+const joyEl = $('joy'), knob = $('knob');
+let joyId = null, lookId = null, lookX = 0;
+addEventListener('pointerdown', e => {
+  if (mode !== 'practice' || !running) return;
+  const r = joyEl.getBoundingClientRect();
+  if (e.clientX >= r.left - 20 && e.clientX <= r.right + 20 && e.clientY >= r.top - 20 && e.clientY <= r.bottom + 20) { joyId = e.pointerId; moveJoy(e); }
+  else if (!e.target.closest('button')) { lookId = e.pointerId; lookX = e.clientX; }
+});
+addEventListener('pointermove', e => {
+  if (e.pointerId === joyId) moveJoy(e);
+  if (e.pointerId === lookId) { heading = norm(heading - (e.clientX - lookX) * 0.2); lookX = e.clientX; }
+});
+const up = e => {
+  if (e.pointerId === joyId) { joyId = null; joy = {x: 0, y: 0}; knob.style.left = knob.style.top = '40px'; }
+  if (e.pointerId === lookId) lookId = null;
+};
+addEventListener('pointerup', up); addEventListener('pointercancel', up);
+function moveJoy(e) {
+  const r = joyEl.getBoundingClientRect();
+  let dx = e.clientX - (r.left + 60), dy = e.clientY - (r.top + 60);
+  const m = Math.hypot(dx, dy), max = 50;
+  if (m > max) { dx = dx / m * max; dy = dy / m * max; }
+  knob.style.left = 40 + dx + 'px'; knob.style.top = 40 + dy + 'px';
+  joy = {x: dx / max, y: -dy / max};
+}
+
+
+// test hooks for screenshots: #practice, #practice-near, #practice-quiz
+if (location.hash.startsWith('#practice')) {
+  startPractice();
+  if (location.hash.includes('near')) {
+    const t = treasures[0]; player.x = t.x - 14; player.y = t.y - 6; heading = norm(Math.atan2(14, 6) / D2R) - 12;
+  }
+  if (location.hash.includes('quiz')) { const t = treasures[0]; t.got = true; found = 1; score = 0; askQuestion(); }
+}
+})();
+</script>
+</body>
+</html>
