@@ -156,7 +156,7 @@ function spawn() {
   const base = Math.random() * 360;
   for (let i = 0; i < TREASURES; i++) {
     const ang = (base + i * (360 / TREASURES) + rand(-25, 25)) * D2R;
-    const dist = rand(10, 28);
+    const dist = rand(14, 32);
     treasures.push({x: player.x + Math.sin(ang) * dist, y: player.y + Math.cos(ang) * dist, got: false, ph: rand(0, 6.28), kind: i % 3});
   }
 }
@@ -220,10 +220,10 @@ async function startAR() {
   begin();
   keepAwake();
   setStatus('Looking for GPS... stand in the open');
-  watchStart = performance.now();
+  watchStart = performance.now(); gpsReset();
   watchId = navigator.geolocation.watchPosition(onGPS,
     err => setStatus('GPS problem: ' + err.message + '. Allow location and go outside.'),
-    {enableHighAccuracy: true, maximumAge: 0, timeout: 20000});
+    {enableHighAccuracy: true, maximumAge: 0, timeout: 30000});
   addEventListener('deviceorientationabsolute', onOrient, true);
   addEventListener('deviceorientation', onOrient, true);
   // Fallback: some phones give no compass events. Let the player drag to look instead.
@@ -276,22 +276,64 @@ function stop() {
 }
 
 /* ---------- sensors ---------- */
+/* GPS pipeline: reject bad fixes -> 2D Kalman filter (accuracy-weighted) -> eased on-screen position */
+const GPS = {minAcc: 60, goodAcc: 15, maxSpeed: 9, lastT: 0, varr: 0, bad: 0, fixes: 0, lastFix: 0, tx: 0, ty: 0};
+function gpsReset() { GPS.lastT = 0; GPS.varr = 0; GPS.bad = 0; GPS.fixes = 0; GPS.lastFix = 0; GPS.best = null; }
+function gpsQuality() {
+  if (!player.has) return {c: '#999', t: 'GPS ...'};
+  if (performance.now() - (GPS.poorAt || -1e9) < 4000) return {c: '#e5484d', t: 'GPS weak', a: GPS.poorAcc};
+  const a = player.acc;
+  if (performance.now() - GPS.lastFix > 8000) return {c: '#e5484d', t: 'GPS lost'};
+  if (a <= 8) return {c: '#30a46c', t: 'GPS good'};
+  if (a <= 20) return {c: '#f5a524', t: 'GPS ok'};
+  return {c: '#e5484d', t: 'GPS weak'};
+}
 function onGPS(p) {
-  const c = p.coords;
+  const c = p.coords, now = performance.now();
+  if (!(c.accuracy > 0)) return;
+  GPS.lastFix = now;
   if (!origin) {
-    const waited = (performance.now() - watchStart) / 1000;
-    if (c.accuracy > 25 && waited < 25) { setStatus('Getting better GPS (now ' + Math.round(c.accuracy) + ' m, stay in the open)...'); return; }
-    origin = {lat: c.latitude, lon: c.longitude};
-    player = {x: 0, y: 0, acc: c.accuracy, has: true};
+    // wait for a decent first fix; keep the best one seen and use it after 20 s
+    if (!GPS.best || c.accuracy < GPS.best.accuracy) GPS.best = {latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy};
+    const waited = (now - watchStart) / 1000;
+    if (c.accuracy > GPS.goodAcc && waited < 20) { player.acc = c.accuracy; setStatus('Getting a better GPS lock (now +/- ' + Math.round(c.accuracy) + ' m). Stand in the open, wait a few seconds...'); return; }
+    const f = c.accuracy <= GPS.best.accuracy ? c : GPS.best;
+    origin = {lat: f.latitude, lon: f.longitude};
+    player = {x: 0, y: 0, acc: f.accuracy, has: true};
+    GPS.tx = 0; GPS.ty = 0; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = p.timestamp || Date.now(); GPS.fixes = 1;
     spawn();
     setStatus('Treasures hidden around you. Look and walk!');
     buzz(60);
     return;
   }
   const q = toXY(c.latitude, c.longitude);
-  // light smoothing so markers do not jitter
-  player.x += (q.x - player.x) * 0.5; player.y += (q.y - player.y) * 0.5;
-  player.acc = c.accuracy;
+  const t = p.timestamp || Date.now();
+  const dt = Math.max(0.2, Math.min(10, (t - GPS.lastT) / 1000));
+  // 1) very poor fix: ignore, only show the accuracy so the player knows why
+  if (c.accuracy > GPS.minAcc) { GPS.poorAt = now; GPS.poorAcc = c.accuracy; return; }
+  // 2) teleport check: faster than a person can run and no better than what we have -> ignore (but accept after 3 in a row)
+  const d = Math.hypot(q.x - GPS.tx, q.y - GPS.ty);
+  const slack = 2 * (c.accuracy + Math.sqrt(GPS.varr));
+  if (d > GPS.maxSpeed * dt + slack && GPS.bad < 3) { GPS.bad++; return; }
+  if (GPS.bad >= 3) { GPS.varr = c.accuracy * c.accuracy; GPS.tx = q.x; GPS.ty = q.y; }
+  GPS.bad = 0;
+  // 3) Kalman update: walking speed noise, weighted by reported accuracy
+  const speed = typeof c.speed === 'number' && c.speed >= 0 ? c.speed : 1.4;
+  const Q = Math.max(0.6, Math.min(4, speed + 0.6));
+  GPS.varr += dt * Q * Q;
+  const r = Math.max(9, c.accuracy * c.accuracy);
+  const K = GPS.varr / (GPS.varr + r);
+  GPS.tx += K * (q.x - GPS.tx); GPS.ty += K * (q.y - GPS.ty);
+  GPS.varr *= (1 - K);
+  GPS.lastT = t; GPS.fixes++;
+  // keep the shown accuracy honest: the filtered estimate can be tighter than one raw fix, never better than 3 m
+  player.acc = Math.max(3, Math.min(c.accuracy, Math.sqrt(GPS.varr) + 1));
+}
+// per-frame easing toward the filtered position (no visible jumps)
+function gpsStep(dt) {
+  if (mode !== 'ar' || !origin) return;
+  const k = 1 - Math.exp(-dt * 4);
+  player.x += (GPS.tx - player.x) * k; player.y += (GPS.ty - player.y) * k;
 }
 
 function onOrient(e) {
@@ -319,6 +361,7 @@ function loop(now) {
   if (!running) return;
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (mode === 'practice' && !paused) stepPractice(dt);
+  gpsStep(dt);
   if (!paused) check();
   draw(now / 1000);
   updateHud();
@@ -339,7 +382,7 @@ function stepPractice(dt) {
   player.y += (Math.cos(h) * fx - Math.sin(h) * sx) * sp * dt;
 }
 
-function collectRadius() { return Math.max(COLLECT_M, Math.min(player.acc, 12)); }
+function collectRadius() { return mode === 'ar' ? Math.max(6, Math.min(player.acc * 1.2, 12)) : COLLECT_M; }
 
 function check() {
   if (!player.has) return;
@@ -400,7 +443,7 @@ function draw(time) {
   if (nearest) {
     const m = Math.round(nearest.dist);
     const acc = mode === 'ar' ? '  (GPS +/- ' + Math.round(player.acc) + ' m)' : '';
-    setStatus(m <= collectRadius() + 2 ? 'Very close! ' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc);
+    setStatus(m <= collectRadius() + 2 ? 'Very close! ' + m + ' m' : (mode === 'ar' && player.acc > 25 ? 'GPS weak (+/- ' + Math.round(player.acc) + ' m). Move to open sky, treasure ~' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc));
   }
 }
 
@@ -483,7 +526,7 @@ function updateHud() {
   $('found').textContent = found + ' / ' + TREASURES;
   const s = Math.floor((performance.now() - t0) / 1000);
   if (running && !paused) $('timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
-  $('accPill').textContent = mode === 'ar' ? (player.has ? '+/- ' + Math.round(player.acc) + ' m' : 'GPS ...') : 'practice';
+  if (mode === 'ar') { const gq = gpsQuality(); $('accPill').textContent = gq.t + (player.has ? ' +/- ' + Math.round(gq.a || player.acc) + ' m' : ''); $('accPill').style.borderColor = gq.c; $('accPill').style.color = gq.c === '#999' ? '#fff' : gq.c; } else { $('accPill').textContent = 'practice'; $('accPill').style.borderColor = ''; $('accPill').style.color = ''; }
 }
 
 function askQuestion() {
