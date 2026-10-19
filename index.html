@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#0b1d2a">
+<meta name="description" content="GeoQuest AR - outdoor AR treasure hunt demo by Team Techneon for the CORS expo.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="data:,">
 <title>GeoQuest AR - Techneon</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -19,19 +24,21 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b1d2a;color:#fff;fon
 button{font:inherit;color:#fff;border:0;border-radius:14px;cursor:pointer}
 button.big{width:100%;max-width:360px;padding:16px;font-size:18px;font-weight:700;background:linear-gradient(135deg,#ffb703,#fb8500);color:#1a1200;box-shadow:0 6px 20px rgba(255,170,0,.35)}
 button.big.alt{background:#1f6f8b;color:#fff;box-shadow:none}
-button.small{position:fixed;right:12px;bottom:14px;padding:8px 14px;background:rgba(0,0,0,.5);font-size:14px}
+button.small{position:fixed;right:12px;bottom:14px;padding:8px 14px;background:rgba(0,0,0,.5);font-size:14px;z-index:25}
+button.small.snd{right:12px;bottom:58px}
 details{max-width:420px;text-align:left;opacity:.9}
 summary{cursor:pointer;text-align:center}
 li{margin:6px 0}
 .foot{font-size:12px;opacity:.6;max-width:420px}
-.top{position:fixed;top:max(10px,env(safe-area-inset-top));left:0;right:0;display:flex;gap:8px;justify-content:center}
-.pill{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:999px;font-weight:700;font-variant-numeric:tabular-nums}
+.top{position:fixed;top:max(10px,env(safe-area-inset-top));left:0;right:0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:0 8px}
+.pill{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:999px;font-weight:700;font-variant-numeric:tabular-nums;font-size:14px}
 #score{color:#ffd23f}
+#accPill{color:#8fd3ff}
 #radar{position:fixed;left:10px;top:56px;width:120px;height:120px;border-radius:50%;background:rgba(0,0,0,.35)}
 .status{position:fixed;left:0;right:0;bottom:150px;text-align:center;font-size:16px;font-weight:600;text-shadow:0 2px 6px #000;padding:0 70px 0 16px}
 #joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.3)}
 #knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.6)}
-#lookhint{position:fixed;right:14px;top:60px;font-size:12px;opacity:.7}
+#lookhint{position:fixed;right:14px;top:60px;font-size:12px;opacity:.7;max-width:110px;text-align:right}
 .qtitle{font-size:26px;font-weight:800;color:#ffd23f}
 #qtext{font-size:20px;max-width:440px}
 #qopts{display:flex;flex-direction:column;gap:10px;width:100%;max-width:400px}
@@ -52,11 +59,13 @@ li{margin:6px 0}
     <div class="pill" id="score">0 pts</div>
     <div class="pill" id="found">0 / 5</div>
     <div class="pill" id="timer">00:00</div>
+    <div class="pill" id="accPill"></div>
   </div>
   <canvas id="radar" width="260" height="260"></canvas>
   <div id="status" class="status">Looking for GPS...</div>
   <div id="joy" class="hidden"><div id="knob"></div></div>
   <div id="lookhint" class="hidden">Drag screen to turn</div>
+  <button id="snd" class="small snd">Sound: on</button>
   <button id="quit" class="small">Quit</button>
 </div>
 
@@ -69,7 +78,7 @@ li{margin:6px 0}
   <details>
     <summary>How to play</summary>
     <ol>
-      <li>Go outside to an open area (school ground).</li>
+      <li>Go outside to an open area (school ground) and use Chrome on Android.</li>
       <li>Allow camera, location and motion.</li>
       <li>Hold the phone up and turn around. Gold treasures float in the world.</li>
       <li>Walk to a treasure (within 5 m) to grab it, then answer the question.</li>
@@ -122,9 +131,11 @@ let mode = null;           // 'ar' | 'practice'
 let running = false;
 let origin = null;         // first good GPS fix
 let player = {x: 0, y: 0, acc: 10, has: false};
-let heading = 0, pitch = 0, headingOK = false, lookYaw = 0;
+let heading = 0, pitch = 0, headingOK = false;
 let treasures = [], score = 0, found = 0, t0 = 0, paused = false, nextQ = 0;
-let stream = null, watchId = null, raf = 0;
+let stream = null, watchId = null, raf = 0, watchStart = 0;
+let absSeen = false, dragLook = false, camBlocked = false, flash = 0;
+let wakeLock = null, AC = null, soundOn = true;
 const keys = {};
 let joy = {x: 0, y: 0};
 
@@ -138,6 +149,7 @@ addEventListener('resize', size); size();
 const rand = (a, b) => a + Math.random() * (b - a);
 const norm = a => ((a % 360) + 360) % 360;
 const dAng = a => ((a + 540) % 360) - 180;
+const screenAngle = () => (screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : (window.orientation || 0));
 
 function spawn() {
   treasures = [];
@@ -156,33 +168,83 @@ function toXY(lat, lon) {
   };
 }
 
+/* ---------- sound + haptics (no assets, tiny synth) ---------- */
+function audioInit() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (AC && AC.state === 'suspended') AC.resume().catch(() => {});
+}
+function tone(f, delay, dur, type, g) {
+  if (!AC || !soundOn) return;
+  try {
+    const o = AC.createOscillator(), v = AC.createGain(), t = AC.currentTime + delay;
+    o.type = type || 'triangle'; o.frequency.value = f;
+    v.gain.setValueAtTime(0.0001, t);
+    v.gain.exponentialRampToValueAtTime(g || 0.15, t + 0.015);
+    v.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(v); v.connect(AC.destination);
+    o.start(t); o.stop(t + dur + 0.05);
+  } catch (e) {}
+}
+function sfx(n) {
+  if (!soundOn || !AC) return;
+  if (n === 'collect') { tone(660, 0, .12); tone(990, .09, .18); }
+  else if (n === 'correct') { tone(523, 0, .1); tone(659, .08, .1); tone(784, .16, .22); }
+  else if (n === 'wrong') { tone(220, 0, .18, 'sawtooth', .07); tone(185, .14, .25, 'sawtooth', .07); }
+  else if (n === 'win') { [523, 659, 784, 1046, 784, 1046].forEach((f, i) => tone(f, i * .11, .16)); }
+}
+function buzz(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+
+/* ---------- screen helpers ---------- */
+function goFull() { try { const el = document.documentElement; if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {}); } catch (e) {} }
+function exitFull() { try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (e) {} }
+async function keepAwake() { if (!('wakeLock' in navigator)) return; try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+function letSleep() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && running) keepAwake(); });
+
 /* ---------- start / stop ---------- */
 async function startAR() {
-  mode = 'ar';
+  mode = 'ar'; goFull(); audioInit();
+  let motionDenied = false;
   try {
-    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
-      await DeviceOrientationEvent.requestPermission();
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      motionDenied = (await DeviceOrientationEvent.requestPermission()) !== 'granted';
     }
   } catch (e) {}
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}}, audio: false});
-    cam.srcObject = stream; cam.style.display = 'block';
-  } catch (e) { cam.style.display = 'none'; }
+  // camera attaches whenever the permission answer comes back; the game does not wait for it
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}}, audio: false})
+      .then(s => { if (running && mode === 'ar') { stream = s; cam.srcObject = s; cam.style.display = 'block'; } else s.getTracks().forEach(t => t.stop()); })
+      .catch(() => { cam.style.display = 'none'; camBlocked = true; });
+  } else { cam.style.display = 'none'; camBlocked = true; }
   if (!navigator.geolocation) { alert('This phone has no GPS support. Try practice mode.'); return; }
   begin();
+  keepAwake();
   setStatus('Looking for GPS... stand in the open');
-  watchId = navigator.geolocation.watchPosition(onGPS, err => setStatus('GPS problem: ' + err.message + '. Allow location, go outside.'),
+  watchStart = performance.now();
+  watchId = navigator.geolocation.watchPosition(onGPS,
+    err => setStatus('GPS problem: ' + err.message + '. Allow location and go outside.'),
     {enableHighAccuracy: true, maximumAge: 0, timeout: 20000});
   addEventListener('deviceorientationabsolute', onOrient, true);
   addEventListener('deviceorientation', onOrient, true);
+  // Fallback: some phones give no compass events. Let the player drag to look instead.
+  setTimeout(() => {
+    if (running && mode === 'ar' && !headingOK) {
+      dragLook = true; headingOK = true;
+      $('lookhint').classList.remove('hidden');
+      if ($('status').textContent.indexOf('GPS problem') !== 0) {
+        setStatus(motionDenied ? 'Motion blocked - drag the screen to look around' : 'No compass data - drag the screen to look around');
+      }
+    }
+  }, 6000);
 }
 
 function startPractice() {
-  mode = 'practice';
+  mode = 'practice'; goFull(); audioInit();
   cam.style.display = 'none';
   player = {x: 0, y: 0, acc: 3, has: true};
   headingOK = true; heading = 0;
   begin();
+  keepAwake();
   spawn();
   $('joy').classList.remove('hidden'); $('lookhint').classList.remove('hidden');
   setStatus('Practice: drag the joystick to walk, drag the screen to turn');
@@ -196,26 +258,34 @@ function begin() {
   cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
 }
 
-function stop() {
-  running = false; cancelAnimationFrame(raf);
+function stopSensors() {
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   removeEventListener('deviceorientationabsolute', onOrient, true);
   removeEventListener('deviceorientation', onOrient, true);
-  origin = null; player.has = false; headingOK = false;
+  letSleep();
+}
+
+function stop() {
+  running = false; cancelAnimationFrame(raf);
+  stopSensors();
+  origin = null; player.has = false; headingOK = false; absSeen = false; dragLook = false; camBlocked = false; flash = 0;
   $('hud').classList.add('hidden'); $('joy').classList.add('hidden'); $('lookhint').classList.add('hidden');
   cam.style.display = 'none';
+  exitFull();
 }
 
 /* ---------- sensors ---------- */
 function onGPS(p) {
   const c = p.coords;
   if (!origin) {
-    if (c.accuracy > 25) { setStatus('Waiting for better GPS (now ' + Math.round(c.accuracy) + ' m)...'); return; }
+    const waited = (performance.now() - watchStart) / 1000;
+    if (c.accuracy > 25 && waited < 25) { setStatus('Getting better GPS (now ' + Math.round(c.accuracy) + ' m, stay in the open)...'); return; }
     origin = {lat: c.latitude, lon: c.longitude};
     player = {x: 0, y: 0, acc: c.accuracy, has: true};
     spawn();
     setStatus('Treasures hidden around you. Look and walk!');
+    buzz(60);
     return;
   }
   const q = toXY(c.latitude, c.longitude);
@@ -225,20 +295,22 @@ function onGPS(p) {
 }
 
 function onOrient(e) {
-  if (e.type === 'deviceorientation' && e.absolute === false && !('webkitCompassHeading' in e)) { /* relative only: keep as fallback */ }
   let h = null;
-  if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
-  else if (e.alpha !== null && e.beta !== null && e.gamma !== null) {
-    const a = e.alpha * D2R, b = e.beta * D2R, g = e.gamma * D2R;
-    const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), sG = Math.sin(g);
-    const rA = -cA * sG * cB - sA * sB, rB = -sA * sG * cB + cA * sB;
-    h = norm(Math.atan2(rA, rB) / D2R);
+  const scr = screenAngle();
+  if (typeof e.webkitCompassHeading === 'number') {
+    h = norm(e.webkitCompassHeading + scr); absSeen = true;       // iOS: true compass heading
+  } else if (e.type === 'deviceorientationabsolute' && e.alpha !== null) {
+    h = norm(360 - e.alpha + scr); absSeen = true;                // Android: absolute frame
+  } else if (e.alpha !== null && !absSeen) {
+    h = norm(360 - e.alpha + scr);                                // relative fallback (consistent while turning)
   }
   if (h !== null) {
     if (!headingOK) { heading = h; headingOK = true; }
     else heading = norm(heading + dAng(h - heading) * 0.25);
   }
-  if (e.beta !== null) pitch = e.beta - 90;
+  if (e.beta !== null && scr === 0) pitch = e.beta - 90;
+  else if (e.gamma !== null && scr === 90) pitch = e.gamma - 90;
+  else if (e.gamma !== null && scr === 270) pitch = -e.gamma - 90;
 }
 
 /* ---------- main loop ---------- */
@@ -246,7 +318,7 @@ let last = performance.now();
 function loop(now) {
   if (!running) return;
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (mode === 'practice') stepPractice(dt);
+  if (mode === 'practice' && !paused) stepPractice(dt);
   if (!paused) check();
   draw(now / 1000);
   updateHud();
@@ -267,12 +339,18 @@ function stepPractice(dt) {
   player.y += (Math.cos(h) * fx - Math.sin(h) * sx) * sp * dt;
 }
 
+function collectRadius() { return Math.max(COLLECT_M, Math.min(player.acc, 12)); }
+
 function check() {
   if (!player.has) return;
-  const thr = Math.max(COLLECT_M, Math.min(player.acc, 9));
+  const thr = collectRadius();
   for (const t of treasures) {
     if (t.got) continue;
-    if (Math.hypot(t.x - player.x, t.y - player.y) <= thr) { t.got = true; found++; askQuestion(); return; }
+    if (Math.hypot(t.x - player.x, t.y - player.y) <= thr) {
+      t.got = true; found++; flash = 1;
+      sfx('collect'); buzz([40, 50, 40]);
+      askQuestion(); return;
+    }
   }
 }
 
@@ -281,11 +359,11 @@ function draw(time) {
   const W = innerWidth, H = innerHeight;
   ctx.clearRect(0, 0, W, H);
   if (mode === 'practice') drawWorld(W, H, time);
+  if (flash > 0) { ctx.fillStyle = 'rgba(255,236,150,' + (flash * 0.55) + ')'; ctx.fillRect(0, 0, W, H); flash = Math.max(0, flash - 0.05); }
   if (!player.has || !headingOK) {
     ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, W, H);
     return;
   }
-  const yaw = mode === 'practice' ? 0 : 0;
   const hdg = heading;
   const pxPerDeg = W / HFOV;
   const horizon = H * 0.5 + (mode === 'ar' ? pitch * (H / VFOV) : 0);
@@ -322,7 +400,7 @@ function draw(time) {
   if (nearest) {
     const m = Math.round(nearest.dist);
     const acc = mode === 'ar' ? '  (GPS +/- ' + Math.round(player.acc) + ' m)' : '';
-    setStatus(m <= 10 ? 'Very close! ' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc);
+    setStatus(m <= collectRadius() + 2 ? 'Very close! ' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc);
   }
 }
 
@@ -381,6 +459,11 @@ function drawRadar(items) {
   rctx.fillStyle = 'rgba(8,40,30,.8)'; rctx.beginPath(); rctx.arc(c, c, r - 2, 0, 6.28); rctx.fill();
   rctx.strokeStyle = 'rgba(120,255,170,.5)'; rctx.lineWidth = 2;
   for (const f of [0.33, 0.66, 1]) { rctx.beginPath(); rctx.arc(c, c, (r - 4) * f, 0, 6.28); rctx.stroke(); }
+  // GPS accuracy ring around the player
+  if (mode === 'ar' && player.has) {
+    const rr = Math.min(player.acc / 35, 1) * (r - 10);
+    rctx.fillStyle = 'rgba(143,211,255,.12)'; rctx.beginPath(); rctx.arc(c, c, Math.max(6, rr), 0, 6.28); rctx.fill();
+  }
   // view cone
   rctx.fillStyle = 'rgba(255,255,255,.18)'; rctx.beginPath(); rctx.moveTo(c, c);
   rctx.arc(c, c, r - 4, (-90 - HFOV / 2) * D2R, (-90 + HFOV / 2) * D2R); rctx.closePath(); rctx.fill();
@@ -400,6 +483,7 @@ function updateHud() {
   $('found').textContent = found + ' / ' + TREASURES;
   const s = Math.floor((performance.now() - t0) / 1000);
   if (running && !paused) $('timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  $('accPill').textContent = mode === 'ar' ? (player.has ? '+/- ' + Math.round(player.acc) + ' m' : 'GPS ...') : 'practice';
 }
 
 function askQuestion() {
@@ -414,7 +498,8 @@ function askQuestion() {
       if (box.dataset.done) return; box.dataset.done = '1';
       score += 100 + (o.ok ? 100 : 0);
       b.className = o.ok ? 'good' : 'bad';
-      if (!o.ok) [...box.children].forEach(x => { if (x.textContent === q[1][q[2]]) x.className = 'good'; });
+      if (o.ok) { sfx('correct'); buzz(60); }
+      else { sfx('wrong'); buzz([80, 60, 80]); [...box.children].forEach(x => { if (x.textContent === q[1][q[2]]) x.className = 'good'; }); }
       $('qres').textContent = o.ok ? 'Correct! +200 points' : 'Not quite. +100 for finding it';
       setTimeout(afterQuiz, 1400);
     };
@@ -434,7 +519,9 @@ function finish() {
   const s = Math.floor((performance.now() - t0) / 1000);
   const bonus = Math.max(0, 300 - s);
   score += bonus;
-  running = false;
+  running = false; cancelAnimationFrame(raf);
+  stopSensors();      // battery: camera, GPS, motion off once the quest is done
+  sfx('win'); buzz([60, 80, 60, 80, 120]);
   $('endstats').innerHTML = 'Treasures: ' + found + ' / ' + TREASURES + '<br>Time: ' + Math.floor(s / 60) + 'm ' + (s % 60) + 's<br>Speed bonus: +' + bonus + '<br><b style="color:#ffd23f;font-size:30px">' + score + ' points</b>';
   $('end').classList.remove('hidden');
 }
@@ -444,16 +531,18 @@ $('btnAR').onclick = startAR;
 $('btnPractice').onclick = startPractice;
 $('btnAgain').onclick = () => { stop(); $('end').classList.add('hidden'); $('start').classList.remove('hidden'); };
 $('quit').onclick = () => { stop(); $('start').classList.remove('hidden'); };
+$('snd').onclick = () => { soundOn = !soundOn; if (soundOn) audioInit(); $('snd').textContent = soundOn ? 'Sound: on' : 'Sound: off'; };
 addEventListener('keydown', e => { keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = true; });
 addEventListener('keyup', e => { keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false; });
 
-// joystick + drag-to-look (practice mode)
+// joystick + drag-to-look
 const joyEl = $('joy'), knob = $('knob');
 let joyId = null, lookId = null, lookX = 0;
+function canLook() { return running && !paused && (mode === 'practice' || (mode === 'ar' && dragLook)); }
 addEventListener('pointerdown', e => {
-  if (mode !== 'practice' || !running) return;
+  if (!canLook()) return;
   const r = joyEl.getBoundingClientRect();
-  if (e.clientX >= r.left - 20 && e.clientX <= r.right + 20 && e.clientY >= r.top - 20 && e.clientY <= r.bottom + 20) { joyId = e.pointerId; moveJoy(e); }
+  if (mode === 'practice' && e.clientX >= r.left - 20 && e.clientX <= r.right + 20 && e.clientY >= r.top - 20 && e.clientY <= r.bottom + 20) { joyId = e.pointerId; moveJoy(e); }
   else if (!e.target.closest('button')) { lookId = e.pointerId; lookX = e.clientX; }
 });
 addEventListener('pointermove', e => {
@@ -474,9 +563,9 @@ function moveJoy(e) {
   joy = {x: dx / max, y: -dy / max};
 }
 
-
-// test hooks for screenshots: #practice, #practice-near, #practice-quiz
-if (location.hash.startsWith('#practice')) {
+// test hooks for screenshots: #practice, #practice-near, #practice-quiz, #ar
+if (location.hash === '#ar') startAR();
+else if (location.hash.startsWith('#practice')) {
   startPractice();
   if (location.hash.includes('near')) {
     const t = treasures[0]; player.x = t.x - 14; player.y = t.y - 6; heading = norm(Math.atan2(14, 6) / D2R) - 12;
