@@ -222,7 +222,11 @@ async function startAR() {
   setStatus('Looking for GPS... stand in the open');
   watchStart = performance.now(); gpsReset();
   watchId = navigator.geolocation.watchPosition(onGPS,
-    err => setStatus('GPS problem: ' + err.message + '. Allow location and go outside.'),
+    err => {
+      if (err && err.code === 1) setStatus('Location is blocked. Allow location for this site, then reload.');
+      else if (!origin) setStatus('Still searching for GPS. Stand in the open, away from buildings...');
+      else GPS.poorAt = performance.now();   // transient timeout/unavailable: keep the last good position, show weak GPS
+    },
     {enableHighAccuracy: true, maximumAge: 0, timeout: 30000});
   addEventListener('deviceorientationabsolute', onOrient, true);
   addEventListener('deviceorientation', onOrient, true);
@@ -231,7 +235,7 @@ async function startAR() {
     if (running && mode === 'ar' && !headingOK) {
       dragLook = true; headingOK = true;
       $('lookhint').classList.remove('hidden');
-      if ($('status').textContent.indexOf('GPS problem') !== 0) {
+      if ($('status').textContent.indexOf('Location is blocked') !== 0) {
         setStatus(motionDenied ? 'Motion blocked - drag the screen to look around' : 'No compass data - drag the screen to look around');
       }
     }
