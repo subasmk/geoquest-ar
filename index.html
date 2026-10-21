@@ -288,21 +288,35 @@ function stop() {
 
 /* ---------- sensors ---------- */
 /* GPS pipeline: reject bad fixes -> 2D Kalman filter (accuracy-weighted) -> eased on-screen position */
-const GPS = {minAcc: 60, goodAcc: 15, maxSpeed: 9, lastT: 0, varr: 0, bad: 0, fixes: 0, lastFix: 0, tx: 0, ty: 0};
-function gpsReset() { GPS.lastT = 0; GPS.varr = 0; GPS.bad = 0; GPS.fixes = 0; GPS.lastFix = 0; GPS.best = null; }
+const GPS = {minAcc: 60, goodAcc: 15, maxSpeed: 9, lastT: 0, varr: 0, bad: 0, fixes: 0, lastFix: 0, tx: 0, ty: 0, lastAccept: 0, rawAcc: 0, rejN: 0, rejBest: null};
+function gpsReset() { GPS.lastT = 0; GPS.varr = 0; GPS.bad = 0; GPS.fixes = 0; GPS.lastFix = 0; GPS.best = null; GPS.lastAccept = 0; GPS.rawAcc = 0; GPS.rejN = 0; GPS.rejBest = null; }
 function gpsQuality() {
   if (!player.has) return {c: '#999', t: 'GPS ...'};
-  if (performance.now() - (GPS.poorAt || -1e9) < 4000) return {c: '#e5484d', t: 'GPS weak', a: GPS.poorAcc};
+  const now = performance.now();
+  const age = Math.max(0, Math.round((now - GPS.lastAccept) / 1000)); // seconds since the last accepted fix
+  if (now - (GPS.poorAt || -1e9) < 4000) return {c: '#e5484d', t: 'GPS weak', a: GPS.poorAcc, age: age, dim: true};
+  if (now - GPS.lastFix > 8000) return {c: '#e5484d', t: 'GPS lost', a: GPS.rawAcc || player.acc, age: age, dim: true};
+  if (now - GPS.lastAccept > 8000) return {c: '#e5484d', t: 'GPS weak', a: GPS.rawAcc || player.acc, age: age, dim: true}; // fixes arrive but none pass: show raw accuracy, not the stale fix
   const a = player.acc;
-  if (performance.now() - GPS.lastFix > 8000) return {c: '#e5484d', t: 'GPS lost'};
-  if (a <= 8) return {c: '#30a46c', t: 'GPS good'};
-  if (a <= 20) return {c: '#f5a524', t: 'GPS ok'};
-  return {c: '#e5484d', t: 'GPS weak'};
+  if (a <= 8) return {c: '#30a46c', t: 'GPS good', a: a, age: age};
+  if (a <= 20) return {c: '#f5a524', t: 'GPS ok', a: a, age: age};
+  return {c: '#e5484d', t: 'GPS weak', a: a, age: age};
+}
+// Count consecutive rejected fixes. If nothing passes for a while (indoors, tunnel), accept the
+// best rejected fix once so the position follows the player instead of freezing on a stale fix.
+function gpsReject(c, now) {
+  GPS.rejN++;
+  if (!GPS.rejBest || c.accuracy < GPS.rejBest.accuracy) GPS.rejBest = {latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy};
+  if (GPS.rejN < 5 || !origin) return;
+  const f = GPS.rejBest, q = toXY(f.latitude, f.longitude);
+  GPS.tx = q.x; GPS.ty = q.y; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = GPS.lastFixT || Date.now();
+  player.acc = Math.max(3, f.accuracy);
+  GPS.bad = 0; GPS.rejN = 0; GPS.rejBest = null; GPS.lastAccept = now; // pill reads weak from the poor accuracy
 }
 function onGPS(p) {
   const c = p.coords, now = performance.now();
   if (!(c.accuracy > 0)) return;
-  GPS.lastFix = now;
+  GPS.lastFix = now; GPS.lastFixT = p.timestamp || Date.now(); GPS.rawAcc = c.accuracy;
   if (!origin) {
     // wait for a decent first fix; keep the best one seen and use it after 20 s
     if (!GPS.best || c.accuracy < GPS.best.accuracy) GPS.best = {latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy};
@@ -311,7 +325,7 @@ function onGPS(p) {
     const f = c.accuracy <= GPS.best.accuracy ? c : GPS.best;
     origin = {lat: f.latitude, lon: f.longitude};
     player = {x: 0, y: 0, acc: f.accuracy, has: true};
-    GPS.tx = 0; GPS.ty = 0; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = p.timestamp || Date.now(); GPS.fixes = 1;
+    GPS.tx = 0; GPS.ty = 0; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = p.timestamp || Date.now(); GPS.fixes = 1; GPS.lastAccept = now; GPS.rejN = 0; GPS.rejBest = null;
     spawn();
     setStatus('Treasures hidden around you. Look and walk!');
     buzz(60);
@@ -321,11 +335,11 @@ function onGPS(p) {
   const t = p.timestamp || Date.now();
   const dt = Math.max(0.2, Math.min(10, (t - GPS.lastT) / 1000));
   // 1) very poor fix: ignore, only show the accuracy so the player knows why
-  if (c.accuracy > GPS.minAcc) { GPS.poorAt = now; GPS.poorAcc = c.accuracy; return; }
+  if (c.accuracy > GPS.minAcc) { GPS.poorAt = now; GPS.poorAcc = c.accuracy; gpsReject(c, now); return; }
   // 2) teleport check: faster than a person can run and no better than what we have -> ignore (but accept after 3 in a row)
   const d = Math.hypot(q.x - GPS.tx, q.y - GPS.ty);
   const slack = 2 * (c.accuracy + Math.sqrt(GPS.varr));
-  if (d > GPS.maxSpeed * dt + slack && GPS.bad < 3) { GPS.bad++; return; }
+  if (d > GPS.maxSpeed * dt + slack && GPS.bad < 3) { GPS.bad++; gpsReject(c, now); return; }
   if (GPS.bad >= 3) { GPS.varr = c.accuracy * c.accuracy; GPS.tx = q.x; GPS.ty = q.y; }
   GPS.bad = 0;
   // 3) Kalman update: walking speed noise, weighted by reported accuracy
@@ -336,7 +350,7 @@ function onGPS(p) {
   const K = GPS.varr / (GPS.varr + r);
   GPS.tx += K * (q.x - GPS.tx); GPS.ty += K * (q.y - GPS.ty);
   GPS.varr *= (1 - K);
-  GPS.lastT = t; GPS.fixes++;
+  GPS.lastT = t; GPS.fixes++; GPS.lastAccept = now; GPS.rejN = 0; GPS.rejBest = null;
   // keep the shown accuracy honest: the filtered estimate can be tighter than one raw fix, never better than 3 m
   player.acc = Math.max(3, Math.min(c.accuracy, Math.sqrt(GPS.varr) + 1));
 }
@@ -537,7 +551,7 @@ function updateHud() {
   $('found').textContent = found + ' / ' + TREASURES;
   const s = Math.floor((performance.now() - t0) / 1000);
   if (running && !paused) $('timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
-  if (mode === 'ar') { const gq = gpsQuality(); $('accPill').textContent = gq.t + (player.has ? ' +/- ' + Math.round(gq.a || player.acc) + ' m' : ''); $('accPill').style.borderColor = gq.c; $('accPill').style.color = gq.c === '#999' ? '#fff' : gq.c; } else { $('accPill').textContent = 'practice'; $('accPill').style.borderColor = ''; $('accPill').style.color = ''; }
+  if (mode === 'ar') { const gq = gpsQuality(); let txt = gq.t + (player.has ? ' +/- ' + Math.round(gq.a || player.acc) + ' m' : ''); if (player.has && typeof gq.age === 'number') txt += ' - ' + (gq.age < 2 ? 'now' : gq.age + 's ago'); $('accPill').textContent = txt; $('accPill').style.borderColor = gq.c; $('accPill').style.color = gq.c === '#999' ? '#fff' : gq.c; $('accPill').style.opacity = gq.dim ? '0.55' : '1'; } else { $('accPill').textContent = 'practice'; $('accPill').style.borderColor = ''; $('accPill').style.color = ''; $('accPill').style.opacity = ''; }
 }
 
 function askQuestion() {
