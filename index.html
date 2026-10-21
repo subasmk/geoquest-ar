@@ -288,8 +288,14 @@ function stop() {
 
 /* ---------- sensors ---------- */
 /* GPS pipeline: reject bad fixes -> 2D Kalman filter (accuracy-weighted) -> eased on-screen position */
-const GPS = {minAcc: 60, goodAcc: 15, maxSpeed: 9, lastT: 0, varr: 0, bad: 0, fixes: 0, lastFix: 0, tx: 0, ty: 0, lastAccept: 0, rawAcc: 0, rejN: 0, rejBest: null};
-function gpsReset() { GPS.lastT = 0; GPS.varr = 0; GPS.bad = 0; GPS.fixes = 0; GPS.lastFix = 0; GPS.best = null; GPS.lastAccept = 0; GPS.rawAcc = 0; GPS.rejN = 0; GPS.rejBest = null; }
+// Collection gate: a treasure can only be collected on a fresh (<= 8 s), real (non-fallback) fix
+// whose shown accuracy is <= maxCollectAcc. Treasures spawn 14-32 m apart with a 6-12 m pickup
+// radius, so 15 m is the largest uncertainty that still keeps false pickups unlikely while staying
+// reachable with phone GPS (typically 3-10 m). fb marks that the shown position came from the
+// rejection fallback (best of 5 rejected fixes), which keeps the position display alive but must
+// never trigger a quiz.
+const GPS = {minAcc: 60, goodAcc: 15, maxCollectAcc: 15, maxSpeed: 9, lastT: 0, varr: 0, bad: 0, fixes: 0, lastFix: 0, tx: 0, ty: 0, lastAccept: 0, rawAcc: 0, rejN: 0, rejBest: null, fb: false};
+function gpsReset() { GPS.lastT = 0; GPS.varr = 0; GPS.bad = 0; GPS.fixes = 0; GPS.lastFix = 0; GPS.best = null; GPS.lastAccept = 0; GPS.rawAcc = 0; GPS.rejN = 0; GPS.rejBest = null; GPS.fb = false; }
 function gpsQuality() {
   if (!player.has) return {c: '#999', t: 'GPS ...'};
   const now = performance.now();
@@ -311,7 +317,7 @@ function gpsReject(c, now) {
   const f = GPS.rejBest, q = toXY(f.latitude, f.longitude);
   GPS.tx = q.x; GPS.ty = q.y; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = GPS.lastFixT || Date.now();
   player.acc = Math.max(3, f.accuracy);
-  GPS.bad = 0; GPS.rejN = 0; GPS.rejBest = null; GPS.lastAccept = now; // pill reads weak from the poor accuracy
+  GPS.bad = 0; GPS.rejN = 0; GPS.rejBest = null; GPS.lastAccept = now; GPS.fb = true; // pill reads weak from the poor accuracy; collection stays blocked until a real fix passes
 }
 function onGPS(p) {
   const c = p.coords, now = performance.now();
@@ -325,7 +331,7 @@ function onGPS(p) {
     const f = c.accuracy <= GPS.best.accuracy ? c : GPS.best;
     origin = {lat: f.latitude, lon: f.longitude};
     player = {x: 0, y: 0, acc: f.accuracy, has: true};
-    GPS.tx = 0; GPS.ty = 0; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = p.timestamp || Date.now(); GPS.fixes = 1; GPS.lastAccept = now; GPS.rejN = 0; GPS.rejBest = null;
+    GPS.tx = 0; GPS.ty = 0; GPS.varr = f.accuracy * f.accuracy; GPS.lastT = p.timestamp || Date.now(); GPS.fixes = 1; GPS.lastAccept = now; GPS.rejN = 0; GPS.rejBest = null; GPS.fb = false;
     spawn();
     setStatus('Treasures hidden around you. Look and walk!');
     buzz(60);
@@ -350,7 +356,7 @@ function onGPS(p) {
   const K = GPS.varr / (GPS.varr + r);
   GPS.tx += K * (q.x - GPS.tx); GPS.ty += K * (q.y - GPS.ty);
   GPS.varr *= (1 - K);
-  GPS.lastT = t; GPS.fixes++; GPS.lastAccept = now; GPS.rejN = 0; GPS.rejBest = null;
+  GPS.lastT = t; GPS.fixes++; GPS.lastAccept = now; GPS.rejN = 0; GPS.rejBest = null; GPS.fb = false;
   // keep the shown accuracy honest: the filtered estimate can be tighter than one raw fix, never better than 3 m
   player.acc = Math.max(3, Math.min(c.accuracy, Math.sqrt(GPS.varr) + 1));
 }
@@ -409,8 +415,18 @@ function stepPractice(dt) {
 
 function collectRadius() { return mode === 'ar' ? Math.max(6, Math.min(player.acc * 1.2, 12)) : COLLECT_M; }
 
+// Collection gate (AR mode only): block treasure collection while the shown position rests on a
+// stale fix (no accepted fix for 8 s), on the rejection fallback, or on uncertainty too large for the
+// treasure spacing. The position display and fix-age pill are unaffected; practice mode stays playable.
+function canCollect() {
+  if (mode !== 'ar') return true;
+  if (GPS.fb) return false;                                   // position came from the rejection fallback
+  if (performance.now() - GPS.lastAccept > 8000) return false; // fix is stale (same threshold as the pill)
+  return player.acc <= GPS.maxCollectAcc;                      // uncertainty small enough vs 6-12 m radius
+}
+
 function check() {
-  if (!player.has) return;
+  if (!player.has || !canCollect()) return;
   const thr = collectRadius();
   for (const t of treasures) {
     if (t.got) continue;
@@ -468,7 +484,7 @@ function draw(time) {
   if (nearest) {
     const m = Math.round(nearest.dist);
     const acc = mode === 'ar' ? '  (GPS +/- ' + Math.round(player.acc) + ' m)' : '';
-    setStatus(m <= collectRadius() + 2 ? 'Very close! ' + m + ' m' : (mode === 'ar' && player.acc > 25 ? 'GPS weak (+/- ' + Math.round(player.acc) + ' m). Move to open sky, treasure ~' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc));
+    setStatus(m <= collectRadius() + 2 ? (mode === 'ar' && !canCollect() ? 'Right here, but GPS is too unsure (+/- ' + Math.round(player.acc) + ' m). Wait for a fresh fix in the open...' : 'Very close! ' + m + ' m') : (mode === 'ar' && player.acc > 25 ? 'GPS weak (+/- ' + Math.round(player.acc) + ' m). Move to open sky, treasure ~' + m + ' m' : 'Nearest treasure: ' + m + ' m' + acc));
   }
 }
 
