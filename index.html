@@ -3,50 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#0b1d2a">
+<meta name="theme-color" content="#d9262c">
 <meta name="description" content="GeoQuest AR - outdoor AR treasure hunt demo by Team Techneon for the CORS expo.">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Special+Elite&display=swap" rel="stylesheet">
 <title>GeoQuest AR - Techneon</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;overflow:hidden;background:#0b1d2a;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;touch-action:none}
+html,body{margin:0;height:100%;overflow:hidden;background:#181410;color:#181410;font-family:"Special Elite","Courier New",monospace;touch-action:none}
 #cam,#scene{position:fixed;inset:0;width:100%;height:100%}
-#cam{object-fit:cover;background:#0b1d2a}
+#cam{object-fit:cover;background:#181410}
 .hidden{display:none!important}
-.panel{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:radial-gradient(circle at 50% 20%,#1b4a5f 0%,#0b1d2a 70%);overflow:auto;z-index:20}
-#quiz,#end{background:rgba(5,15,25,.88);z-index:30}
-.logo{font-size:44px;font-weight:900;letter-spacing:1px}
-.logo span{color:#ffd23f}
-.tag{max-width:420px;opacity:.85;margin:0}
-button{font:inherit;color:#fff;border:0;border-radius:14px;cursor:pointer}
-button.big{width:100%;max-width:360px;padding:16px;font-size:18px;font-weight:700;background:linear-gradient(135deg,#ffb703,#fb8500);color:#1a1200;box-shadow:0 6px 20px rgba(255,170,0,.35)}
-button.big.alt{background:#1f6f8b;color:#fff;box-shadow:none}
-button.small{position:fixed;right:12px;bottom:14px;padding:8px 14px;background:rgba(0,0,0,.5);font-size:14px;z-index:25}
-button.small.snd{right:12px;bottom:58px}
-details{max-width:420px;text-align:left;opacity:.9}
-summary{cursor:pointer;text-align:center}
-li{margin:6px 0}
-.foot{font-size:12px;opacity:.6;max-width:420px}
+.panel{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:linear-gradient(160deg,#f7f0e1 60%,#d9262c 60.3%);overflow:auto;z-index:20}
+.panel::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(rgba(24,20,16,.14) 1.2px,transparent 1.3px);background-size:9px 9px}
+.panel>*{position:relative;z-index:1}
+#quiz,#end{background:#f7f0e1;z-index:30}
+.logo{font-family:"Bangers",Impact,fantasy;font-size:58px;font-weight:400;letter-spacing:2px;color:#181410;text-shadow:4px 4px 0 #d9262c;transform:rotate(-2deg);line-height:.95}
+.logo span{color:#d9262c;text-shadow:3px 3px 0 #181410}
+.tag{max-width:420px;margin:0;background:#181410;color:#f7f0e1;padding:10px 14px;transform:rotate(1deg);box-shadow:5px 5px 0 rgba(24,20,16,.25);font-size:15px;line-height:1.5}
+button{font-family:"Bangers",Impact,fantasy;letter-spacing:2px;color:#f7f0e1;background:#d9262c;border:4px solid #181410;border-radius:6px;cursor:pointer;box-shadow:6px 6px 0 #181410}
+button.big{width:100%;max-width:360px;padding:14px;font-size:24px;transform:rotate(-1deg)}
+button.big.alt{background:#f7f0e1;color:#181410;transform:rotate(1deg)}
+button.small{position:fixed;right:12px;bottom:14px;padding:8px 14px;background:#f7f0e1;color:#181410;font-size:14px;z-index:25;border-width:3px;box-shadow:3px 3px 0 #181410;border-radius:4px}
+button.small.snd{right:12px;bottom:62px}
+details{max-width:420px;text-align:left;background:#fffdf6;border:3px solid #181410;box-shadow:5px 5px 0 #181410;padding:10px 14px;transform:rotate(-.6deg)}
+summary{cursor:pointer;text-align:center;font-family:"Bangers",Impact,fantasy;font-size:18px;letter-spacing:2px;color:#d9262c}
+li{margin:6px 0;font-size:14px}
+.foot{font-size:12px;max-width:420px;color:#f7f0e1;text-shadow:1px 1px 0 rgba(24,20,16,.45)}
 .top{position:fixed;top:max(10px,env(safe-area-inset-top));left:0;right:0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:0 8px}
-.pill{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:999px;font-weight:700;font-variant-numeric:tabular-nums;font-size:14px}
-#score{color:#ffd23f}
-#accPill{color:#8fd3ff}
-#radar{position:fixed;left:10px;top:56px;width:120px;height:120px;border-radius:50%;background:rgba(0,0,0,.35)}
-.status{position:fixed;left:0;right:0;bottom:150px;text-align:center;font-size:16px;font-weight:600;text-shadow:0 2px 6px #000;padding:0 70px 0 16px}
-#joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.3)}
-#knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.6)}
-#lookhint{position:fixed;right:14px;top:60px;font-size:12px;opacity:.7;max-width:110px;text-align:right}
-.qtitle{font-size:26px;font-weight:800;color:#ffd23f}
-#qtext{font-size:20px;max-width:440px}
-#qopts{display:flex;flex-direction:column;gap:10px;width:100%;max-width:400px}
-#qopts button{padding:14px;font-size:17px;background:#1f6f8b}
-#qopts button.good{background:#2a9d3f}
-#qopts button.bad{background:#b5303a}
-#qres{min-height:26px;font-weight:700}
-#endstats{font-size:20px;line-height:1.6}
+.pill{background:#f7f0e1;border:3px solid #181410;color:#181410;padding:6px 14px;border-radius:0;font-family:"Bangers",Impact,fantasy;letter-spacing:1px;font-size:16px;box-shadow:3px 3px 0 #181410}
+#score{color:#d9262c}
+#accPill{background:#181410;color:#f7f0e1}
+#radar{position:fixed;left:10px;top:64px;width:120px;height:120px;border-radius:50%;background:rgba(24,20,16,.55);border:3px solid #181410;box-shadow:4px 4px 0 rgba(24,20,16,.45)}
+.status{position:fixed;left:50%;right:auto;transform:translateX(-50%) rotate(-1deg);bottom:150px;max-width:86%;text-align:center;font-family:"Bangers",Impact,fantasy;font-size:18px;letter-spacing:1px;color:#f7f0e1;background:#181410;padding:8px 18px;box-shadow:4px 4px 0 rgba(24,20,16,.35)}
+#joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:rgba(247,240,225,.28);border:3px solid #181410;box-shadow:3px 3px 0 rgba(24,20,16,.4)}
+#knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:#d9262c;border:3px solid #181410}
+#lookhint{position:fixed;right:14px;top:64px;font-family:"Bangers",Impact,fantasy;font-size:14px;letter-spacing:1px;background:#181410;color:#f7f0e1;padding:6px 10px;transform:rotate(1.5deg);max-width:130px;text-align:right;box-shadow:3px 3px 0 rgba(24,20,16,.35)}
+.qtitle{font-family:"Bangers",Impact,fantasy;font-size:44px;font-weight:400;color:#d9262c;letter-spacing:2px;text-shadow:3px 3px 0 #181410;transform:rotate(-2deg)}
+#qtext{font-family:"Bangers",Impact,fantasy;font-size:28px;line-height:1.15;max-width:440px;background:#fffdf6;border:4px solid #181410;box-shadow:6px 6px 0 #181410;padding:16px;transform:rotate(.8deg);letter-spacing:1px}
+#qopts{display:flex;flex-direction:column;gap:12px;width:100%;max-width:400px}
+#qopts button{padding:12px;font-size:20px;background:#f7f0e1;color:#181410;border-width:3px;box-shadow:4px 4px 0 #181410}
+#qopts button.good{background:#d9262c;color:#f7f0e1;transform:rotate(-1deg) scale(1.02)}
+#qopts button.bad{background:#5a544c;color:#f7f0e1}
+#qres{min-height:26px;font-family:"Bangers",Impact,fantasy;font-size:22px;color:#d9262c;letter-spacing:2px}
+#endstats{font-size:17px;line-height:1.8;background:#fffdf6;border:3px solid #181410;box-shadow:5px 5px 0 #181410;padding:14px 22px;transform:rotate(-.6deg)}
 </style>
 </head>
 <body>
